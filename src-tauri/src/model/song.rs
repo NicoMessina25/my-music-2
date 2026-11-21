@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct SongInput {
     pub title: String,
-    pub artist_name: String,          // el front manda "artistName"
+    pub artist_name: String, // el front manda "artistName"
     pub album: Option<String>,
     pub release_date: Option<String>,
     pub duration_ms: Option<i64>,

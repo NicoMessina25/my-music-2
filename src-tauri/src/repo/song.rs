@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use crate::error::{unique_to_conflict, AppError, AppResult};
+use crate::error::{AppError, AppResult, unique_to_conflict};
 use crate::model::song::{SongInput, SongView};
 use crate::repo::artist;
 
@@ -167,7 +167,10 @@ mod tests {
         let mut conn = open_in_memory().unwrap();
         let a = create(&mut conn, &input("Song 2", "Blur")).unwrap();
         let b = create(&mut conn, &input("Parklife", "BLUR")).unwrap();
-        assert_eq!(get(&conn, a).unwrap().artist_id, get(&conn, b).unwrap().artist_id);
+        assert_eq!(
+            get(&conn, a).unwrap().artist_id,
+            get(&conn, b).unwrap().artist_id
+        );
     }
 
     #[test]
@@ -184,8 +187,18 @@ mod tests {
         for ok in ["1997", "1997-02", "2024-02-29"] {
             assert!(validate_release_date(ok).is_ok(), "debería aceptar {ok}");
         }
-        for bad in ["97", "1997-13", "1997-2", "2023-02-29", "1997-02-30", "abcd"] {
-            assert!(validate_release_date(bad).is_err(), "debería rechazar {bad}");
+        for bad in [
+            "97",
+            "1997-13",
+            "1997-2",
+            "2023-02-29",
+            "1997-02-30",
+            "abcd",
+        ] {
+            assert!(
+                validate_release_date(bad).is_err(),
+                "debería rechazar {bad}"
+            );
         }
     }
 }

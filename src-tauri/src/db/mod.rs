@@ -1,10 +1,10 @@
 mod migrations;
 
-use std::sync::MutexGuard;
 use crate::error::{AppError, AppResult};
+use std::sync::MutexGuard;
 
-use std::{path::Path, sync::Mutex, time::Duration};
 use rusqlite::Connection;
+use std::{path::Path, sync::Mutex, time::Duration};
 
 pub use migrations::MIGRATIONS;
 
@@ -42,9 +42,7 @@ mod tests {
     fn schema_is_created_and_fks_enforced() {
         let conn = super::open_in_memory().unwrap();
         // song con artist inexistente debe fallar por FK
-        let err = conn.execute(
-            "INSERT INTO song (title, artist_id) VALUES ('x', 999)", [],
-        );
+        let err = conn.execute("INSERT INTO song (title, artist_id) VALUES ('x', 999)", []);
         assert!(err.is_err());
     }
 }
