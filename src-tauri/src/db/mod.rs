@@ -36,6 +36,12 @@ fn configure(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+impl Db {
+    pub fn conn(&self) -> AppResult<MutexGuard<'_, Connection>> {
+        self.0.lock().map_err(|_| AppError::Lock)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -44,11 +50,5 @@ mod tests {
         // song con artist inexistente debe fallar por FK
         let err = conn.execute("INSERT INTO song (title, artist_id) VALUES ('x', 999)", []);
         assert!(err.is_err());
-    }
-}
-
-impl Db {
-    pub fn conn(&self) -> AppResult<MutexGuard<'_, Connection>> {
-        self.0.lock().map_err(|_| AppError::Lock)
     }
 }
