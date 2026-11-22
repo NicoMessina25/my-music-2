@@ -82,7 +82,7 @@ fn map_row(row: &Row) -> rusqlite::Result<SongView> {
     })
 }
 
-fn parse_song(input: &SongInput) -> AppResult<()> {
+fn parse_song(input: &SongInput) -> AppResult<SongInput> {
     let title = input.title.trim();
     if title.is_empty() {
         return Err(AppError::Validation("El título es obligatorio".into()));
@@ -96,12 +96,20 @@ fn parse_song(input: &SongInput) -> AppResult<()> {
     {
         return Err(AppError::Validation("La duración debe ser positiva".into()));
     }
-    Ok(())
+    
+    Ok(SongInput {
+        title: title.into(),
+        album: clean(&input.album),
+        artist_name: input.artist_name.clone(),
+        duration_ms: input.duration_ms,
+        notes: clean(&input.notes),
+        release_date
+    })
 }
 
 pub fn create(conn: &mut Connection, input: &SongInput) -> AppResult<SongView> {
-    // 1) Validar ANTES de abrir la transacción
-    parse_song(input)?;
+    // 1) Parsear ANTES de abrir la transacción
+    let input = parse_song(input)?;
 
     // 2) Transacción: artista + canción, todo o nada
     let tx = conn.transaction()?;
@@ -111,12 +119,12 @@ pub fn create(conn: &mut Connection, input: &SongInput) -> AppResult<SongView> {
         "INSERT INTO song (title, artist_id, album, release_date, duration_ms, notes)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
-            input.title.trim(),
+            input.title,
             artist_id,
-            clean(&input.album),
-            clean(&input.release_date),
+            input.album,
+            input.release_date,
             input.duration_ms,
-            clean(&input.notes),
+            input.notes,
         ],
     )
     .map_err(|e| unique_to_conflict(e, DUP))?;
@@ -147,7 +155,7 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<SongView> {
 
 pub fn update(conn: &mut Connection, id: i64, input: &SongInput) -> AppResult<SongView> {
     // 1) Validar ANTES de abrir la transacción
-    parse_song(input)?;
+    let input = parse_song(input)?;
 
     // 2) Transacción: artista + canción, todo o nada
     let tx = conn.transaction()?;
@@ -164,12 +172,12 @@ pub fn update(conn: &mut Connection, id: i64, input: &SongInput) -> AppResult<So
                 notes = ?6
             WHERE id = ?7",
             params![
-                input.title.trim(),
+                input.title,
                 artist_id,
-                clean(&input.album),
-                clean(&input.release_date),
+                input.album,
+                input.release_date,
                 input.duration_ms,
-                clean(&input.notes),
+                input.notes,
                 id
             ],
         )
