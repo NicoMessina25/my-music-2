@@ -162,11 +162,11 @@ mod tests {
         let mut conn = open_in_memory().unwrap();
 
         song::create(&mut conn, &input("song1", "Kygo")).unwrap();
-        let id = song::create(&mut conn, &input("song2", "Kygo")).unwrap();
+        let s = song::create(&mut conn, &input("song2", "Kygo")).unwrap();
 
         conn.execute(
             "UPDATE song SET archived_at = '2026-11-06' WHERE id = ?1",
-            [id],
+            [s.id],
         )
         .unwrap();
 
@@ -179,11 +179,11 @@ mod tests {
     fn list_artists_with_all_archived_songs() {
         let mut conn = open_in_memory().unwrap();
 
-        let id = song::create(&mut conn, &input("song2", "Kygo")).unwrap();
+        let s = song::create(&mut conn, &input("song2", "Kygo")).unwrap();
 
         conn.execute(
             "UPDATE song SET archived_at = '2026-11-06' WHERE id = ?1",
-            [id],
+            [s.id],
         )
         .unwrap();
 

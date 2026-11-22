@@ -23,6 +23,7 @@ pub fn open(path: &Path) -> DbResult<Connection> {
 }
 
 /// Base en memoria para tests: mismo esquema, sin WAL.
+#[cfg(test)]
 pub fn open_in_memory() -> DbResult<Connection> {
     let mut conn = Connection::open_in_memory()?;
     configure(&conn)?;

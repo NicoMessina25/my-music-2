@@ -28,6 +28,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::artist::list_artists,
             commands::artist::update_artist,
+            commands::song::list_songs,
+            commands::song::create_song,
+            commands::song::update_song,
+            commands::song::get_song,
+            commands::song::archive_song
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
