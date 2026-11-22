@@ -19,5 +19,5 @@ pub struct ArtistView {
     pub id: i64,
     pub name: String,
     pub archived_at: Option<String>,
-    pub songs_count: i64
+    pub songs_count: i64,
 }

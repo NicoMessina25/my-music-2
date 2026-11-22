@@ -1,11 +1,14 @@
-use tauri::State;
 use crate::db::Db;
-use crate::model::artist::{Artist, ArtistInput, ArtistView};
 use crate::error::AppResult;
+use crate::model::artist::{Artist, ArtistInput, ArtistView};
 use crate::repo::artist as repo;
+use tauri::State;
 
 #[tauri::command]
-pub fn list_artists(db: State<'_, Db>, include_archived: Option<bool>) -> AppResult<Vec<ArtistView>> {
+pub fn list_artists(
+    db: State<'_, Db>,
+    include_archived: Option<bool>,
+) -> AppResult<Vec<ArtistView>> {
     repo::list(&*db.conn()?, include_archived.unwrap_or(false))
 }
 
