@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ArtistRef } from "./artists";
 
 export type SongInput = { 
     title: string,
-    artistName: string,
+    artists: string[],
     album: string | null,
     releaseDate: string | null,
     durationMs: number | null,
@@ -12,8 +13,7 @@ export type SongInput = {
 export type SongView = { 
     id: number,
     title: string,
-    artistId: number,
-    artistName: string,
+    artists: ArtistRef[],
     album: string | null,
     releaseDate: string | null,
     durationMs: number | null,

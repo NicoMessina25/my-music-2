@@ -1,11 +1,16 @@
+use std::collections::HashSet;
+
+use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use crate::error::{AppError, AppResult, unique_to_conflict};
+use crate::error::{AppError, AppResult};
+use crate::model::artist::ArtistRef;
 use crate::model::song::{SongInput, SongView};
 use crate::repo::artist;
 
+const DUP: &str = "Esa canción ya existe para esos artistas";
+
 // ───────────── Helpers de validación ─────────────
-const DUP: &str = "Esa canción ya existe para ese artista";
 
 /// Recorta espacios; si queda vacío lo trata como NULL.
 fn clean(value: &Option<String>) -> Option<String> {
@@ -61,25 +66,59 @@ pub fn validate_release_date(s: &str) -> AppResult<()> {
 // ───────────── Consultas ─────────────
 
 const SELECT_SONG: &str = "
-    SELECT s.id, s.title, s.artist_id, a.name, s.album, s.release_date,
-           s.duration_ms, s.notes, s.created_at, s.archived_at
+    SELECT 
+        s.id, 
+        s.title, 
+        json_group_array(json_object(
+            'id', a.id, 'name', a.name
+        ) ORDER BY sa.position) AS artists,
+        s.album,
+        s.release_date,
+        s.duration_ms,
+        s.notes,
+        s.created_at,
+        s.archived_at
     FROM song s
-    JOIN artist a ON a.id = s.artist_id";
+    JOIN song_artist sa ON sa.song_id = s.id 
+    JOIN artist a ON a.id = sa.artist_id
+";
+
+const SELECT_SONG_GROUP_BY: &str = "
+    GROUP BY s.id";
 
 /// Convierte una fila del SELECT de arriba en un SongView.
 fn map_row(row: &Row) -> rusqlite::Result<SongView> {
+    let artists_json: String = row.get(2)?;
+    let artists = serde_json::from_str::<Vec<ArtistRef>>(&artists_json)
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(2, Type::Text, Box::new(e)))?;
+
     Ok(SongView {
         id: row.get(0)?,
         title: row.get(1)?,
-        artist_id: row.get(2)?,
-        artist_name: row.get(3)?,
-        album: row.get(4)?,
-        release_date: row.get(5)?,
-        duration_ms: row.get(6)?,
-        notes: row.get(7)?,
-        created_at: row.get(8)?,
-        archived_at: row.get(9)?,
+        artists,
+        album: row.get(3)?,
+        release_date: row.get(4)?,
+        duration_ms: row.get(5)?,
+        notes: row.get(6)?,
+        created_at: row.get(7)?,
+        archived_at: row.get(8)?,
     })
+}
+
+fn clean_artists(names: &[String]) -> AppResult<Vec<String>> {
+    let mut seen = HashSet::new();
+    let artists: Vec<String> = names
+        .iter()
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty())
+        .filter(|n| seen.insert(n.to_lowercase()))
+        .map(String::from)
+        .collect();
+
+    if artists.is_empty() {
+        return Err(AppError::Validation("Al menos un artista".into()));
+    }
+    Ok(artists)
 }
 
 fn parse_song(input: &SongInput) -> AppResult<SongInput> {
@@ -96,40 +135,88 @@ fn parse_song(input: &SongInput) -> AppResult<SongInput> {
     {
         return Err(AppError::Validation("La duración debe ser positiva".into()));
     }
+    let artists = clean_artists(&input.artists)?;
 
     Ok(SongInput {
         title: title.into(),
+        artists,
         album: clean(&input.album),
-        artist_name: input.artist_name.clone(),
+        release_date,
         duration_ms: input.duration_ms,
         notes: clean(&input.notes),
-        release_date,
     })
 }
 
+/// get_or_create de cada nombre, en orden. Corta en el primer error.
+fn resolve_artists(conn: &Connection, names: &[String]) -> AppResult<Vec<i64>> {
+    names
+        .iter()
+        .map(|name| artist::get_or_create(conn, name))
+        .collect()
+}
+
+/// Conflict si existe otra canción (archivada o no) con el mismo título
+/// y el mismo conjunto de artistas, sin importar el orden.
+fn ensure_not_duplicate(
+    conn: &Connection,
+    exclude_id: Option<i64>,
+    title: &str,
+    artist_ids: &[i64],
+) -> AppResult<()> {
+    let wanted: HashSet<i64> = artist_ids.iter().copied().collect();
+
+    let sql = format!(
+        "{SELECT_SONG}
+         WHERE lower(s.title) = lower(?1) AND s.id IS NOT ?2
+         {SELECT_SONG_GROUP_BY}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let candidates = stmt
+        .query_map(params![title, exclude_id], map_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let duplicated = candidates.iter().any(|song| {
+        let ids: HashSet<i64> = song.artists.iter().map(|a| a.id).collect();
+        ids == wanted
+    });
+
+    if duplicated {
+        return Err(AppError::Conflict(DUP.into()));
+    }
+    Ok(())
+}
+
+/// Inserta las filas de song_artist; la posición es el índice en la lista.
+fn insert_song_artists(conn: &Connection, song_id: i64, artist_ids: &[i64]) -> AppResult<()> {
+    let mut stmt =
+        conn.prepare("INSERT INTO song_artist (song_id, artist_id, position) VALUES (?1, ?2, ?3)")?;
+    for (position, artist_id) in artist_ids.iter().enumerate() {
+        stmt.execute(params![song_id, artist_id, position as i64])?;
+    }
+    Ok(())
+}
+
 pub fn create(conn: &mut Connection, input: &SongInput) -> AppResult<SongView> {
-    // 1) Parsear ANTES de abrir la transacción
     let input = parse_song(input)?;
 
-    // 2) Transacción: artista + canción, todo o nada
     let tx = conn.transaction()?;
-    let artist_id = artist::get_or_create(&tx, &input.artist_name)?;
+    let artist_ids = resolve_artists(&tx, &input.artists)?;
+    ensure_not_duplicate(&tx, None, &input.title, &artist_ids)?;
 
     tx.execute(
-        "INSERT INTO song (title, artist_id, album, release_date, duration_ms, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO song (title, album, release_date, duration_ms, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             input.title,
-            artist_id,
             input.album,
             input.release_date,
             input.duration_ms,
             input.notes,
         ],
-    )
-    .map_err(|e| unique_to_conflict(e, DUP))?;
-
+    )?;
     let id = tx.last_insert_rowid();
+    insert_song_artists(&tx, id, &artist_ids)?;
+
     tx.commit()?;
     get(conn, id)
 }
@@ -138,7 +225,8 @@ pub fn list(conn: &Connection, include_archived: bool) -> AppResult<Vec<SongView
     let sql = format!(
         "{SELECT_SONG}
          WHERE (?1 OR s.archived_at IS NULL)
-         ORDER BY a.name COLLATE NOCASE, s.title COLLATE NOCASE"
+         {SELECT_SONG_GROUP_BY}
+         ORDER BY MIN(CASE WHEN sa.position = 0 THEN a.name END) COLLATE NOCASE, s.title COLLATE NOCASE"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([include_archived], map_row)?;
@@ -147,45 +235,39 @@ pub fn list(conn: &Connection, include_archived: bool) -> AppResult<Vec<SongView
 }
 
 pub fn get(conn: &Connection, id: i64) -> AppResult<SongView> {
-    let sql = format!("{SELECT_SONG} WHERE s.id = ?1");
+    let sql = format!("{SELECT_SONG} WHERE s.id = ?1 {SELECT_SONG_GROUP_BY}");
     conn.query_row(&sql, [id], map_row)
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("No existe la canción {id}")))
 }
 
 pub fn update(conn: &mut Connection, id: i64, input: &SongInput) -> AppResult<SongView> {
-    // 1) Validar ANTES de abrir la transacción
     let input = parse_song(input)?;
 
-    // 2) Transacción: artista + canción, todo o nada
     let tx = conn.transaction()?;
-    let artist_id = artist::get_or_create(&tx, &input.artist_name)?;
+    let artist_ids = resolve_artists(&tx, &input.artists)?;
 
-    let n = tx
-        .execute(
-            "UPDATE song
-            SET title = ?1, 
-                artist_id = ?2, 
-                album = ?3, 
-                release_date = ?4, 
-                duration_ms = ?5, 
-                notes = ?6
-            WHERE id = ?7",
-            params![
-                input.title,
-                artist_id,
-                input.album,
-                input.release_date,
-                input.duration_ms,
-                input.notes,
-                id
-            ],
-        )
-        .map_err(|e| unique_to_conflict(e, DUP))?;
-
+    let n = tx.execute(
+        "UPDATE song
+         SET title = ?1, album = ?2, release_date = ?3, duration_ms = ?4, notes = ?5
+         WHERE id = ?6",
+        params![
+            input.title,
+            input.album,
+            input.release_date,
+            input.duration_ms,
+            input.notes,
+            id
+        ],
+    )?;
     if n == 0 {
         return Err(AppError::NotFound(format!("Canción {id} inexistente")));
     }
+
+    ensure_not_duplicate(&tx, Some(id), &input.title, &artist_ids)?;
+
+    tx.execute("DELETE FROM song_artist WHERE song_id = ?1", [id])?;
+    insert_song_artists(&tx, id, &artist_ids)?;
 
     tx.commit()?;
     get(conn, id)
@@ -207,10 +289,10 @@ mod tests {
     use super::*;
     use crate::db::open_in_memory;
 
-    fn input(title: &str, artist: &str) -> SongInput {
+    fn input(title: &str, artists: &[&str]) -> SongInput {
         SongInput {
             title: title.into(),
-            artist_name: artist.into(),
+            artists: artists.iter().map(|a| a.to_string()).collect(),
             album: None,
             release_date: None,
             duration_ms: None,
@@ -218,47 +300,179 @@ mod tests {
         }
     }
 
-    fn input_complete(
-        title: &str,
-        artist: &str,
-        album: &str,
-        release_date: &str,
-        duration_ms: i64,
-        notes: &str,
-    ) -> SongInput {
-        SongInput {
-            title: title.into(),
-            artist_name: artist.into(),
-            album: Some(album.into()),
-            release_date: Some(release_date.into()),
-            duration_ms: Some(duration_ms),
-            notes: Some(notes.into()),
-        }
+    fn names(song: &SongView) -> Vec<&str> {
+        song.artists.iter().map(|a| a.name.as_str()).collect()
     }
+
+    fn titles(songs: &[SongView]) -> Vec<&str> {
+        songs.iter().map(|s| s.title.as_str()).collect()
+    }
+
+    /// Estado real de song_artist: (nombre, posición), ordenado por posición.
+    fn artist_rows(conn: &Connection, song_id: i64) -> Vec<(String, i64)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.name, sa.position
+                 FROM song_artist sa
+                 JOIN artist a ON a.id = sa.artist_id
+                 WHERE sa.song_id = ?1
+                 ORDER BY sa.position",
+            )
+            .unwrap();
+        stmt.query_map([song_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    }
+
+    // ───────────── create ─────────────
 
     #[test]
     fn create_song_and_artist() {
         let mut conn = open_in_memory().unwrap();
-        let s: SongView = create(&mut conn, &input("Song 2", "Blur")).unwrap();
+
+        let s = create(&mut conn, &input("Song 2", &["Blur"])).unwrap();
+
         assert_eq!(s.title, "Song 2");
-        assert_eq!(s.artist_name, "Blur");
+        assert_eq!(names(&s), vec!["Blur"]);
     }
 
     #[test]
-    fn reuses_artist_no_case_sensitive() {
+    fn create_keeps_artist_order() {
         let mut conn = open_in_memory().unwrap();
-        let a = create(&mut conn, &input("Song 2", "Blur")).unwrap();
-        let b = create(&mut conn, &input("Parklife", "BLUR")).unwrap();
-        assert_eq!(a.artist_id, b.artist_id);
+
+        let s = create(
+            &mut conn,
+            &input("Feel Good Inc.", &["Gorillaz", "De La Soul"]),
+        )
+        .unwrap();
+
+        assert_eq!(names(&s), vec!["Gorillaz", "De La Soul"]);
+        assert_eq!(
+            artist_rows(&conn, s.id),
+            vec![("Gorillaz".to_string(), 0), ("De La Soul".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn reuses_artist_case_insensitive() {
+        let mut conn = open_in_memory().unwrap();
+
+        let a = create(&mut conn, &input("Song 2", &["Blur"])).unwrap();
+        let b = create(&mut conn, &input("Parklife", &["BLUR"])).unwrap();
+
+        assert_eq!(a.artists[0].id, b.artists[0].id);
+    }
+
+    #[test]
+    fn duplicated_artists_in_input_keep_first() {
+        let mut conn = open_in_memory().unwrap();
+
+        let s = create(
+            &mut conn,
+            &input("Song 2", &["Blur", "blur", "  BLUR ", "Gorillaz"]),
+        )
+        .unwrap();
+
+        assert_eq!(names(&s), vec!["Blur", "Gorillaz"]);
+        assert_eq!(artist_rows(&conn, s.id).len(), 2);
+    }
+
+    #[test]
+    fn blank_artists_are_ignored() {
+        let mut conn = open_in_memory().unwrap();
+
+        let s = create(&mut conn, &input("Song 2", &["   ", "Blur", ""])).unwrap();
+
+        assert_eq!(names(&s), vec!["Blur"]);
+    }
+
+    #[test]
+    fn create_without_artists_is_validation_error() {
+        let mut conn = open_in_memory().unwrap();
+
+        let empty = create(&mut conn, &input("Song 2", &[])).unwrap_err();
+        let blanks = create(&mut conn, &input("Song 2", &["  ", ""])).unwrap_err();
+
+        assert!(matches!(empty, AppError::Validation(_)));
+        assert!(matches!(blanks, AppError::Validation(_)));
+        assert_eq!(list(&conn, true).unwrap().len(), 0);
     }
 
     #[test]
     fn duplicated_song_conflicts_and_cleans_up() {
         let mut conn = open_in_memory().unwrap();
-        create(&mut conn, &input("Song 2", "Blur")).unwrap();
-        let err = create(&mut conn, &input("song 2", "Blur")).unwrap_err();
+        create(&mut conn, &input("Song 2", &["Blur"])).unwrap();
+
+        let err = create(&mut conn, &input("song 2", &["Blur"])).unwrap_err();
+
         assert!(matches!(err, AppError::Conflict(_)));
         assert_eq!(list(&conn, true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_artists_in_other_order_conflicts() {
+        let mut conn = open_in_memory().unwrap();
+        create(
+            &mut conn,
+            &input("Feel Good Inc.", &["Gorillaz", "De La Soul"]),
+        )
+        .unwrap();
+
+        let err = create(
+            &mut conn,
+            &input("feel good inc.", &["De La Soul", "Gorillaz"]),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AppError::Conflict(_)));
+    }
+
+    #[test]
+    fn same_title_with_different_artists_is_ok() {
+        let mut conn = open_in_memory().unwrap();
+        create(&mut conn, &input("Song 2", &["Blur"])).unwrap();
+
+        create(&mut conn, &input("Song 2", &["Blur", "Gorillaz"])).unwrap();
+
+        assert_eq!(list(&conn, true).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn duplicate_of_archived_song_conflicts() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 2", &["Blur"])).unwrap();
+        archive(&conn, s.id).unwrap();
+
+        let err = create(&mut conn, &input("Song 2", &["Blur"])).unwrap_err();
+
+        assert!(matches!(err, AppError::Conflict(_)));
+    }
+
+    // ───────────── get / list ─────────────
+
+    #[test]
+    fn get_missing_is_not_found() {
+        let conn = open_in_memory().unwrap();
+
+        let err = get(&conn, 999).unwrap_err();
+
+        assert!(matches!(err, AppError::NotFound(_)));
+    }
+
+    #[test]
+    fn list_orders_by_main_artist_then_title() {
+        let mut conn = open_in_memory().unwrap();
+        // "b" tiene a Alfa como secundario: debe ordenarse por Zeta, no por Alfa.
+        create(&mut conn, &input("b", &["Zeta", "Alfa"])).unwrap();
+        create(&mut conn, &input("c", &["Alfa"])).unwrap();
+        create(&mut conn, &input("a", &["Alfa"])).unwrap();
+
+        let songs = list(&conn, false).unwrap();
+
+        assert_eq!(titles(&songs), vec!["a", "c", "b"]);
     }
 
     #[test]
@@ -281,72 +495,114 @@ mod tests {
         }
     }
 
+    // ───────────── update ─────────────
+
     #[test]
     fn update_modifies_all() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 4", "Nicky")).unwrap();
+        let s = create(&mut conn, &input("Song 4", &["Nicky"])).unwrap();
 
-        let s_input = input_complete("  Song 5", "Nicky", "album", "2026-01", 42343, "A");
-
-        let s2 = update(&mut conn, s.id, &s_input).unwrap();
+        let s2 = update(
+            &mut conn,
+            s.id,
+            &SongInput {
+                album: Some("album".into()),
+                release_date: Some("2026-01".into()),
+                duration_ms: Some(42343),
+                notes: Some("A".into()),
+                ..input("  Song 5", &["Nicky"])
+            },
+        )
+        .unwrap();
 
         assert_eq!(s2.title, "Song 5");
         assert_eq!(s2.album, Some("album".into()));
         assert_eq!(s2.release_date, Some("2026-01".into()));
         assert_eq!(s2.duration_ms, Some(42343));
         assert_eq!(s2.notes, Some("A".into()));
-        assert_eq!(s2.artist_id, s.artist_id);
+        assert_eq!(s2.artists[0].id, s.artists[0].id);
+    }
+
+    #[test]
+    fn update_without_changes_does_not_conflict_with_itself() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 2", &["Blur"])).unwrap();
+
+        let s2 = update(&mut conn, s.id, &input("Song 2", &["Blur"])).unwrap();
+
+        assert_eq!(s2.title, "Song 2");
+        assert_eq!(names(&s2), vec!["Blur"]);
     }
 
     #[test]
     fn update_new_artist() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 4", "Nicky")).unwrap();
+        let s = create(&mut conn, &input("Song 4", &["Nicky"])).unwrap();
 
-        let s2 = update(&mut conn, s.id, &input(&s.title, "Pedro")).unwrap();
+        let s2 = update(&mut conn, s.id, &input("Song 4", &["Pedro"])).unwrap();
 
-        let a = artist::get(&conn, s2.artist_id).unwrap();
-
-        assert_eq!(a.name, "Pedro");
-        assert_ne!(s.artist_id, s2.artist_id);
+        assert_eq!(names(&s2), vec!["Pedro"]);
+        assert_ne!(s2.artists[0].id, s.artists[0].id);
     }
 
     #[test]
     fn update_existing_artist() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 6", "Pedro")).unwrap();
-        let s2 = create(&mut conn, &input("Song 4", "Nicky")).unwrap();
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
+        let s2 = create(&mut conn, &input("Song 4", &["Nicky"])).unwrap();
 
-        let s3 = update(&mut conn, s2.id, &input(&s2.title, "PEDRO")).unwrap();
+        let s3 = update(&mut conn, s2.id, &input("Song 4", &["PEDRO"])).unwrap();
 
-        assert_eq!(s3.artist_id, s.artist_id);
+        assert_eq!(s3.artists[0].id, s.artists[0].id);
+    }
+
+    #[test]
+    fn update_replaces_artist_set() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 2", &["Blur", "Gorillaz"])).unwrap();
+
+        update(&mut conn, s.id, &input("Song 2", &["Damon Albarn"])).unwrap();
+
+        assert_eq!(
+            artist_rows(&conn, s.id),
+            vec![("Damon Albarn".to_string(), 0)]
+        );
+    }
+
+    #[test]
+    fn update_reorders_artists() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 2", &["Blur", "Gorillaz"])).unwrap();
+
+        let s2 = update(&mut conn, s.id, &input("Song 2", &["Gorillaz", "Blur"])).unwrap();
+
+        assert_eq!(names(&s2), vec!["Gorillaz", "Blur"]);
     }
 
     #[test]
     fn update_inexisting_song() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 6", "Pedro")).unwrap();
+        create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
         let len = artist::list(&conn, true).unwrap().len();
 
-        let err = update(&mut conn, -1, &input(&s.title, "ALANA")).unwrap_err();
+        let err = update(&mut conn, -1, &input("Song 6", &["ALANA"])).unwrap_err();
 
         assert!(matches!(err, AppError::NotFound(_)));
         assert_eq!(artist::list(&conn, true).unwrap().len(), len);
     }
 
     #[test]
-    fn update_existing_song() {
+    fn update_to_existing_song_conflicts_and_keeps_original() {
         let mut conn = open_in_memory().unwrap();
-        create(&mut conn, &input("Song 6", "Pedro")).unwrap();
-        let s = create(&mut conn, &input("Song 4", "Nicky")).unwrap();
+        create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
+        let s = create(&mut conn, &input("Song 4", &["Nicky"])).unwrap();
 
-        let err = update(&mut conn, s.id, &input("Song 6", "PEDRO")).unwrap_err();
+        let err = update(&mut conn, s.id, &input("Song 6", &["PEDRO"])).unwrap_err();
 
         assert!(matches!(err, AppError::Conflict(_)));
-
         let s2 = get(&conn, s.id).unwrap();
         assert_eq!(s2.title, "Song 4");
-        assert_eq!(s2.artist_name, "Nicky");
+        assert_eq!(names(&s2), vec!["Nicky"]);
     }
 
     #[test]
@@ -356,7 +612,7 @@ mod tests {
             &mut conn,
             &SongInput {
                 album: Some("album1".into()),
-                ..input("Song 6", "Pedro")
+                ..input("Song 6", &["Pedro"])
             },
         )
         .unwrap();
@@ -366,7 +622,7 @@ mod tests {
             s.id,
             &SongInput {
                 album: Some("album2".into()),
-                ..input("Song 6", "Pedro")
+                ..input("Song 6", &["Pedro"])
             },
         )
         .unwrap();
@@ -377,14 +633,14 @@ mod tests {
     #[test]
     fn update_invalid_input() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 6", "Pedro")).unwrap();
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
 
         let err = update(
             &mut conn,
             s.id,
             &SongInput {
                 release_date: Some("fsdf".into()),
-                ..input("Song 6", "Pedro")
+                ..input("Song 6", &["Pedro"])
             },
         )
         .unwrap_err();
@@ -392,42 +648,36 @@ mod tests {
         assert!(matches!(err, AppError::Validation(_)));
     }
 
+    // ───────────── archive ─────────────
+
     #[test]
     fn archive_once() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 6", "Pedro")).unwrap();
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
 
         archive(&conn, s.id).unwrap();
 
-        let len_not_include = list(&conn, false).unwrap().len();
-        let len_include = list(&conn, true).unwrap().len();
-
-        assert_eq!(len_not_include, 0);
-        assert_eq!(len_include, 1);
+        assert_eq!(list(&conn, false).unwrap().len(), 0);
+        assert_eq!(list(&conn, true).unwrap().len(), 1);
     }
 
     #[test]
     fn archive_twice() {
         let mut conn = open_in_memory().unwrap();
-        let s = create(&mut conn, &input("Song 6", "Pedro")).unwrap();
-
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
         let archived_at = "2020-01-01";
-
         conn.execute(
-            "
-            UPDATE song 
-            SET archived_at = ?2
-            WHERE id = ?1
-        ",
+            "UPDATE song SET archived_at = ?2 WHERE id = ?1",
             params![s.id, archived_at],
         )
         .unwrap();
 
         archive(&conn, s.id).unwrap();
 
-        let archived_at_after = get(&conn, s.id).unwrap().archived_at;
-
-        assert_eq!(archived_at_after, Some(archived_at.into()));
+        assert_eq!(
+            get(&conn, s.id).unwrap().archived_at,
+            Some(archived_at.into())
+        );
     }
 
     #[test]

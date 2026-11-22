@@ -9,8 +9,8 @@ const links = [
 
 export default function Layout() {
   return (
-    <div className="flex">
-      <nav className="flex p-2 border-r-2 border-emerald-300 flex-col">
+    <div className="flex h-full">
+      <nav className="flex p-2 border-r-2 border-emerald-300 flex-col h-full">
         <h1 className="font-bold">MyMusic</h1>
         {links.map((l) => (
           <NavLink key={l.to} to={l.to} className={({ isActive }) => (isActive ? "bg-emerald-300" : "")}>
@@ -18,7 +18,7 @@ export default function Layout() {
           </NavLink>
         ))}
       </nav>
-      <main className="content">
+      <main className="bg-gray-200 w-full flex">
         <Outlet />
       </main>
     </div>
