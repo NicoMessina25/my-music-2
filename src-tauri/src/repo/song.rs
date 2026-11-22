@@ -96,14 +96,14 @@ fn parse_song(input: &SongInput) -> AppResult<SongInput> {
     {
         return Err(AppError::Validation("La duración debe ser positiva".into()));
     }
-    
+
     Ok(SongInput {
         title: title.into(),
         album: clean(&input.album),
         artist_name: input.artist_name.clone(),
         duration_ms: input.duration_ms,
         notes: clean(&input.notes),
-        release_date
+        release_date,
     })
 }
 
