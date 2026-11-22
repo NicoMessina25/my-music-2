@@ -34,7 +34,8 @@ pub fn list(conn: &Connection, include_archived: bool) -> AppResult<Vec<ArtistVi
     let mut stmt = conn.prepare(
         "SELECT a.id, a.name, a.archived_at, COUNT(s.id) AS songs_count
         FROM artist a
-        LEFT JOIN song s ON s.artist_id = a.id AND s.archived_at IS NULL
+        LEFT JOIN song_artist sa ON sa.artist_id = a.id
+        LEFT JOIN song s ON sa.song_id = s.id AND s.archived_at IS NULL
         WHERE s.id IS NOT NULL OR ?1
         GROUP BY a.id, a.name, a.archived_at
         ORDER BY a.name COLLATE NOCASE",
@@ -92,10 +93,10 @@ mod tests {
     use super::*;
     use crate::{db::open_in_memory, model::song::SongInput, repo::song};
 
-    fn input(title: &str, artist: &str) -> SongInput {
+    fn song_input(title: &str, artists: &[&str]) -> SongInput {
         SongInput {
             title: title.into(),
-            artist_name: artist.into(),
+            artists: artists.iter().map(|a| a.to_string()).collect(),
             album: None,
             release_date: None,
             duration_ms: None,
@@ -160,17 +161,12 @@ mod tests {
     #[test]
     fn list_artists_with_archived_songs() {
         let mut conn = open_in_memory().unwrap();
-
-        song::create(&mut conn, &input("song1", "Kygo")).unwrap();
-        let s = song::create(&mut conn, &input("song2", "Kygo")).unwrap();
-
-        conn.execute(
-            "UPDATE song SET archived_at = '2026-11-06' WHERE id = ?1",
-            [s.id],
-        )
-        .unwrap();
+        song::create(&mut conn, &song_input("song1", &["Kygo"])).unwrap();
+        let s = song::create(&mut conn, &song_input("song2", &["Kygo"])).unwrap();
+        song::archive(&conn, s.id).unwrap();
 
         let artists = list(&conn, false).unwrap();
+
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].songs_count, 1);
     }
@@ -178,16 +174,34 @@ mod tests {
     #[test]
     fn list_artists_with_all_archived_songs() {
         let mut conn = open_in_memory().unwrap();
+        let s = song::create(&mut conn, &song_input("song2", &["Kygo"])).unwrap();
+        song::archive(&conn, s.id).unwrap();
 
-        let s = song::create(&mut conn, &input("song2", "Kygo")).unwrap();
+        assert_eq!(list(&conn, false).unwrap().len(), 0);
 
-        conn.execute(
-            "UPDATE song SET archived_at = '2026-11-06' WHERE id = ?1",
-            [s.id],
+        let all = list(&conn, true).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].songs_count, 0);
+    }
+
+    #[test]
+    fn shared_song_counts_for_every_artist() {
+        let mut conn = open_in_memory().unwrap();
+        song::create(
+            &mut conn,
+            &song_input("Feel Good Inc.", &["Gorillaz", "De La Soul"]),
         )
         .unwrap();
 
-        let artists = list(&conn, false).unwrap();
-        assert_eq!(artists.len(), 0);
+        let counts: Vec<_> = list(&conn, false)
+            .unwrap()
+            .iter()
+            .map(|a| (a.name.clone(), a.songs_count))
+            .collect();
+
+        assert_eq!(
+            counts,
+            vec![("De La Soul".to_string(), 1), ("Gorillaz".to_string(), 1)]
+        );
     }
 }

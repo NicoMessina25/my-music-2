@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+use crate::model::artist::ArtistRef;
+
 /// Lo que manda el front para crear o editar una canción.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SongInput {
     pub title: String,
-    pub artist_name: String, // el front manda "artistName"
+    pub artists: Vec<String>,
     pub album: Option<String>,
     pub release_date: Option<String>,
     pub duration_ms: Option<i64>,
@@ -18,8 +20,7 @@ pub struct SongInput {
 pub struct SongView {
     pub id: i64,
     pub title: String,
-    pub artist_id: i64,
-    pub artist_name: String,
+    pub artists: Vec<ArtistRef>,
     pub album: Option<String>,
     pub release_date: Option<String>,
     pub duration_ms: Option<i64>,

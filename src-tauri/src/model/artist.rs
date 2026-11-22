@@ -21,3 +21,10 @@ pub struct ArtistView {
     pub archived_at: Option<String>,
     pub songs_count: i64,
 }
+
+#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtistRef {
+    pub id: i64,
+    pub name: String,
+}

@@ -3,7 +3,11 @@ import { createHashRouter, Navigate, RouterProvider } from "react-router";
 import Layout from "./components/layout/Layout";
 import SongsPage from "./components/songs/SongsPage";
 import ArtistsPage from "./components/artists/ArtistsPage";
+import '@mantine/core/styles.css';
+import '@mantine/notifications/styles.css';
 import "./main.css"
+import { MantineProvider } from '@mantine/core';
+import { Notifications } from "@mantine/notifications";
 
 const router = createHashRouter([
   {
@@ -21,7 +25,10 @@ const router = createHashRouter([
 ]);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
- 
-  <RouterProvider router={router} />
+  <MantineProvider>
+    <Notifications />
+    <RouterProvider router={router} />
+  </MantineProvider>
+  
 
 );

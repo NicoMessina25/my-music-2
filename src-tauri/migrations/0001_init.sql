@@ -8,7 +8,6 @@ CREATE UNIQUE INDEX ux_artist_name ON artist(lower(name));
 CREATE TABLE song (
   id           INTEGER PRIMARY KEY,
   title        TEXT NOT NULL,
-  artist_id    INTEGER NOT NULL REFERENCES artist(id),
   album        TEXT,
   release_date TEXT,              -- 'YYYY' | 'YYYY-MM' | 'YYYY-MM-DD', NULL si se desconoce
   duration_ms  INTEGER,
@@ -16,7 +15,16 @@ CREATE TABLE song (
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   archived_at  TEXT
 );
-CREATE UNIQUE INDEX ux_song ON song(lower(title), artist_id);
+CREATE INDEX ix_song ON song(lower(title));
+
+CREATE TABLE song_artist (
+  song_id      INTEGER NOT NULL REFERENCES song(id),
+  artist_id    INTEGER NOT NULL REFERENCES artist(id),
+  position     INTEGER NOT NULL CHECK(position >= 0),
+  PRIMARY KEY (song_id, artist_id)
+);
+CREATE UNIQUE INDEX ux_position_song ON song_artist(song_id, position);
+CREATE INDEX ix_artist ON song_artist(artist_id);
 
 CREATE TABLE playlist (
   id          INTEGER PRIMARY KEY,
