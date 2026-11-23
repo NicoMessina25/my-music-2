@@ -8,32 +8,46 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "check": "tsc --noEmit && cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
-    "prepare": "git config core.hooksPath .githooks"
+    "check": "npm run format:check && npm run lint && tsc --noEmit && npm run test && cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+    "prepare": "git config core.hooksPath .githooks",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint --max-warnings 0 .",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@mantine/core": "^9.8.2",
-    "@mantine/hooks": "^9.8.2",
-    "@mantine/notifications": "^9.8.2",
+    "@mantine/core": "9.8.2",
+    "@mantine/form": "9.8.2",
+    "@mantine/hooks": "9.8.2",
+    "@mantine/modals": "9.8.2",
+    "@mantine/notifications": "9.8.2",
+    "@phosphor-icons/react": "^2.1.10",
     "@tailwindcss/vite": "^4.3.5",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "clsx": "^2.1.1",
-    "mantine-datatable": "^9.8.4",
+    "mantine-datatable": "9.8.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router": "^8.5.1",
     "tailwindcss": "^4.3.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
+    "eslint": "^10.15.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "postcss": "^8.5.33",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
+    "prettier": "3.10.1",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16"
+    "typescript-eslint": "^8.74.0",
+    "vite": "^8.0.16",
+    "vitest": "^5.1.1"
   }
 }
