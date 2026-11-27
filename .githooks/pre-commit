@@ -4,4 +4,5 @@ set -e
 
 echo "Ejecutando verificación pre-commit"
 
+npm run format:check
 cd src-tauri && cargo fmt --check

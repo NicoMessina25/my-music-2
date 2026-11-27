@@ -284,6 +284,17 @@ pub fn archive(conn: &Connection, id: i64) -> AppResult<()> {
     Ok(())
 }
 
+pub fn restore(conn: &Connection, id: i64) -> AppResult<()> {
+    conn.execute(
+        "UPDATE song
+            SET archived_at = NULL
+            WHERE id = ?1 AND archived_at IS NOT NULL",
+        [id],
+    )?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,5 +695,71 @@ mod tests {
     fn archive_inexistent_song() {
         let conn = open_in_memory().unwrap();
         archive(&conn, -1).unwrap();
+    }
+
+    // ───────────── restore ─────────────
+
+    #[test]
+    fn restore_once() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
+        archive(&conn, s.id).unwrap();
+
+        restore(&conn, s.id).unwrap();
+
+        assert_eq!(get(&conn, s.id).unwrap().archived_at, None);
+        assert_eq!(list(&conn, false).unwrap().len(), 1);
+        assert_eq!(list(&conn, true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_twice() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
+        archive(&conn, s.id).unwrap();
+        restore(&conn, s.id).unwrap();
+
+        restore(&conn, s.id).unwrap();
+
+        assert_eq!(get(&conn, s.id).unwrap().archived_at, None);
+        assert_eq!(list(&conn, false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_active_song_keeps_it_active() {
+        let mut conn = open_in_memory().unwrap();
+        let s = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
+
+        restore(&conn, s.id).unwrap();
+
+        assert_eq!(get(&conn, s.id).unwrap().archived_at, None);
+    }
+
+    #[test]
+    fn restore_only_affects_given_song() {
+        let mut conn = open_in_memory().unwrap();
+        let restored = create(&mut conn, &input("Song 6", &["Pedro"])).unwrap();
+        let other = create(&mut conn, &input("Song 7", &["Pedro"])).unwrap();
+        // Fecha fija para poder comparar con un valor literal.
+        let archived_at = "2020-01-01";
+        conn.execute(
+            "UPDATE song SET archived_at = ?1 WHERE id IN (?2, ?3)",
+            params![archived_at, restored.id, other.id],
+        )
+        .unwrap();
+
+        restore(&conn, restored.id).unwrap();
+
+        assert_eq!(get(&conn, restored.id).unwrap().archived_at, None);
+        assert_eq!(
+            get(&conn, other.id).unwrap().archived_at,
+            Some(archived_at.into())
+        );
+    }
+
+    #[test]
+    fn restore_inexistent_song() {
+        let conn = open_in_memory().unwrap();
+        restore(&conn, -1).unwrap();
     }
 }

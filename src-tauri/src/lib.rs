@@ -32,7 +32,8 @@ pub fn run() {
             commands::song::create_song,
             commands::song::update_song,
             commands::song::get_song,
-            commands::song::archive_song
+            commands::song::archive_song,
+            commands::song::restore_song
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
