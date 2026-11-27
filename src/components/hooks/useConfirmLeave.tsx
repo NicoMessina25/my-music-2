@@ -9,7 +9,8 @@ export default function useConfirmLeave(shouldBlock: () => boolean) {
     if (blocker.state === "blocked")
       modals.openConfirmModal({
         title: "Estás por salir sin guardar",
-        labels: { confirm: "Confirmar", cancel: "Cancelar" },
+        children: "Los cambios que hiciste se van a perder.",
+        labels: { confirm: "Salir sin guardar", cancel: "Seguir editando" },
         onConfirm: () => blocker.proceed(),
         onCancel: () => blocker.reset(),
         confirmProps: { color: "red" },
