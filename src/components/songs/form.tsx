@@ -80,6 +80,7 @@ export default function SongForm({
       />
       <TagsInput
         label="Artistas ('Enter' para agregar)"
+        description="El primero es el principal. Arrastrá para cambiar el orden."
         key={form.key("artists")}
         {...form.getInputProps("artists")}
         data={artists.map((a) => a.name)}
