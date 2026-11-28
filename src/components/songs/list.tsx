@@ -22,7 +22,7 @@ export default function SongsList() {
           {title} de {artists.map((a) => a.name).join(", ")}
         </p>
       ),
-      labels: { confirm: "Confirmar", cancel: "Cancelar" },
+      labels: { confirm: "Archivar", cancel: "Cancelar" },
       onConfirm: () =>
         archiveSong(id)
           .then(() => {
@@ -46,7 +46,7 @@ export default function SongsList() {
           {title} de {artists.map((a) => a.name).join(", ")}
         </p>
       ),
-      labels: { confirm: "Confirmar", cancel: "Cancelar" },
+      labels: { confirm: "Restaurar", cancel: "Cancelar" },
       onConfirm: () =>
         restoreSong(id)
           .then(() => {

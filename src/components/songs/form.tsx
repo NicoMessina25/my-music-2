@@ -24,8 +24,10 @@ export default function SongForm({
     },
 
     validate: {
-      title: (value) => (value?.trim().length > 0 ? null : "Obligatorio"),
-      artists: (value) => (value?.length > 0 ? null : "Al menos un artista"),
+      title: (value: string) =>
+        value.trim().length > 0 ? null : "Obligatorio",
+      artists: (value: string[]) =>
+        value.length > 0 ? null : "Al menos un artista",
       durationMs: (value: string | null) =>
         !value || /^(?:\d+:)?\d{1,2}:[0-5]\d(?:\.\d{1,3})?$/.test(value)
           ? null
@@ -46,7 +48,7 @@ export default function SongForm({
 
   useConfirmLeave(() => form.isDirty());
 
-  const { artists, loading: artistsLoading } = useArtists();
+  const { artists, loading: artistsLoading } = useArtists(true);
 
   function createOrUpdate(input: SongInput) {
     setLoading(true);
@@ -57,10 +59,9 @@ export default function SongForm({
         onSuccess?.(res);
       })
       .catch((err) => {
-        showNotification({ message: errorMessage(err), color: "red" });
-
         if (isAppError(err) && err.kind === "conflict")
           form.setFieldError("title", err.message);
+        else showNotification({ message: errorMessage(err), color: "red" });
       })
       .finally(() => setLoading(false));
   }
@@ -74,7 +75,7 @@ export default function SongForm({
         {...form.getInputProps("title")}
       />
       <TextInput
-        label="Album"
+        label="Álbum"
         key={form.key("album")}
         {...form.getInputProps("album")}
       />
