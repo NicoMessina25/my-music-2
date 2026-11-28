@@ -79,9 +79,7 @@ export default function SongsList() {
         striped
         highlightOnHover
         fetching={loading}
-        rowStyle={(record) =>
-          record.archivedAt ? { backgroundColor: "var(--color-gray-100)" } : {}
-        }
+        rowColor={(record) => (record.archivedAt ? "gray.6" : undefined)}
         records={songs}
         columns={[
           {
