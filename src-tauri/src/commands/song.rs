@@ -28,3 +28,8 @@ pub fn update_song(db: State<'_, Db>, id: i64, input: SongInput) -> AppResult<So
 pub fn archive_song(db: State<'_, Db>, id: i64) -> AppResult<()> {
     repo::archive(&*db.conn()?, id)
 }
+
+#[tauri::command]
+pub fn restore_song(db: State<'_, Db>, id: i64) -> AppResult<()> {
+    repo::restore(&*db.conn()?, id)
+}

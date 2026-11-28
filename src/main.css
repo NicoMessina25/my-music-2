@@ -1,17 +1,22 @@
+@layer theme, base, mantine, mantine-datatable, components, utilities;
 @import "tailwindcss";
-@layer mantine, mantine-datatable;
+@import "@mantine/core/styles.layer.css";
+@import "@mantine/notifications/styles.layer.css";
+@import "mantine-datatable/styles.layer.css";
 
-html, body, #root {
-    margin: 0;
-    padding: 0;
-    height: 100%;
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
 }
 
 .pageContainer {
-    margin: .5rem;
-    padding: 1rem;
-    flex-grow: 1;
-    background-color: white;
-    border-radius: 15px;
-    display: flex;
+  margin: 0.5rem;
+  padding: 1rem;
+  flex-grow: 1;
+  background-color: white;
+  border-radius: 15px;
+  display: flex;
 }

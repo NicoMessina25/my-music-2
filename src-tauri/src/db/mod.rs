@@ -48,8 +48,22 @@ mod tests {
     #[test]
     fn schema_is_created_and_fks_enforced() {
         let conn = super::open_in_memory().unwrap();
-        // song con artist inexistente debe fallar por FK
-        let err = conn.execute("INSERT INTO song (title, artist_id) VALUES ('x', 999)", []);
-        assert!(err.is_err());
+
+        // song_artist con canción y artista inexistentes: la tabla existe
+        // (esquema creado) y el INSERT tiene que fallar justo por la FK.
+        let err = conn
+            .execute(
+                "INSERT INTO song_artist (song_id, artist_id, position) VALUES (999, 999, 0)",
+                [],
+            )
+            .unwrap_err();
+
+        let rusqlite::Error::SqliteFailure(failure, _) = err else {
+            panic!("se esperaba un error de SQLite, llegó: {err:?}");
+        };
+        assert_eq!(
+            failure.extended_code,
+            rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY
+        );
     }
 }
